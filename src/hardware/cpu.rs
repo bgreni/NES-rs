@@ -1,7 +1,7 @@
 use crate::hardware::flags::Flags;
 use crate::hardware::instruction::{AddrModes, Ops};
 use crate::hardware::memory::{MEM_SIZE, MemoryOps};
-use crate::utils::{get_top_bit, is_overflow, check_bit};
+use crate::utils::{get_top_bit, is_overflow, check_bit, combine_bytes};
 use num_traits::FromPrimitive;
 
 
@@ -10,8 +10,8 @@ pub struct Cpu {
     rega: u8,
     pub (super) regx: u8,
     pub (super) regy: u8,
-    flags: Flags,
-    stack: Vec<u8>,
+    pub (super) flags: Flags,
+    pub (super) stack: Vec<u8>,
     pub (super) pc: u16,
 }
 
@@ -38,6 +38,7 @@ impl Cpu {
             Ops::AdcAbsY => self.adc(AddrModes::AbsoluteY),
             Ops::AdcIndX => self.adc(AddrModes::IndirectX),
             Ops::AdcIndY => self.adc(AddrModes::IndirectY),
+
             Ops::AndI => self.and(AddrModes::Immediate),
             Ops::AndZp => self.and(AddrModes::ZeroPage),
             Ops::AndZpX => self.and(AddrModes::ZeroPageX),
@@ -53,11 +54,29 @@ impl Cpu {
             Ops::AslAbsX => self.asl(AddrModes::AbsoluteX),
 
             Ops::Bcc | Ops::Bcs => self.bcc_or_bcs(op != Ops::Bcc),
-            Ops::Beq => self.beq(),
+            Ops::Beq | Ops::Bne => self.beq_or_bne(op == Ops::Beq),
             Ops::Bmi => self.bmi(),
+            Ops::Bpl => self.bpl(),
+            Ops::Bvs | Ops::Bvc => self.bvs_or_bvc(op == Ops::Bvs),
 
             Ops::BitAbs => self.bit(AddrModes::Absolute),
             Ops::BitZp => self.bit(AddrModes::ZeroPage),
+
+            Ops::Brk => self.brk(),
+
+            Ops::Clc => self.flags.carry = false,
+            Ops::Cld => self.flags.decimal = false,
+            Ops::Cli => self.flags.inter_disable = false,
+            Ops::Clv => self.flags.overflow = false,
+
+            Ops::CmpI => self.cmp(AddrModes::Immediate),
+            Ops::CmpZp => self.cmp(AddrModes::ZeroPage),
+            Ops::CmpZpX => self.cmp(AddrModes::ZeroPageX),
+            Ops::CmpAbs => self.cmp(AddrModes::Absolute),
+            Ops::CmpAbsX => self.cmp(AddrModes::AbsoluteX),
+            Ops::CmpAbsY => self.cmp(AddrModes::AbsoluteY),
+            Ops::CmpIndX => self.cmp(AddrModes::IndirectX),
+            Ops::CmpIndY => self.cmp(AddrModes::IndirectY),
 
             _ => self.cry(op as u8)
         }
@@ -90,6 +109,37 @@ impl Cpu {
         }
     }
 
+    fn cmp(&mut self, mode: AddrModes) {
+        let val = self.get_value(mode);
+        self.flags.carry = self.rega >= val;
+        self.flags.zero = self.rega == val;
+        self.flags.negative = self.rega < val;
+    }
+
+    fn bvs_or_bvc(&mut self, check_for_set: bool) {
+        let displace: u16 = self.fetch_next_byte().into();
+
+        if self.flags.overflow == check_for_set {
+            self.pc += displace;
+        }
+    }
+
+    fn brk(&mut self) {
+        self.save_pc();
+        self.save_status();
+        let (lower, upper) = (self.memory[0xFFFE], self.memory[0xFFFF]);
+        self.pc = combine_bytes(upper.into(), lower.into());
+        self.flags.set_breaks();
+    }
+
+    fn bpl(&mut self) {
+        let displace: u16 = self.fetch_next_byte().into();
+
+        if !self.flags.negative {
+            self.pc += displace;
+        }
+    }
+
     fn bmi(&mut self) {
         let displace: u16 = self.fetch_next_byte().into();
 
@@ -100,17 +150,16 @@ impl Cpu {
 
     fn bit(&mut self, mode: AddrModes) {
         let val = self.get_value(mode);
-        print!("FUUUUCK: {}\n", check_bit(val, 6));
         let res = self.rega & val;
         self.flags.zero = res == 0;
         self.flags.overflow = check_bit(val, 6);
         self.flags.negative = check_bit(val, 7);
     }
 
-    fn beq(&mut self) {
+    fn beq_or_bne(&mut self, should_be_zero: bool) {
         let displace: u16 = self.fetch_next_byte().into();
 
-        if self.flags.zero {
+        if self.flags.zero == should_be_zero {
             self.pc += displace;
         }
     }
@@ -168,6 +217,166 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_cmp_carry() {
+        let mut cpu = Cpu::new();
+        cpu.rega = 12;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::CmpI);
+        assert!(cpu.flags.carry);
+        assert!(!cpu.flags.zero);
+        assert!(!cpu.flags.negative);
+    }
+
+    #[test]
+    fn test_cmp_neg() {
+        let mut cpu = Cpu::new();
+        cpu.rega = 10;
+        cpu.memory[1] = 12;
+        cpu.exec_instruction(Ops::CmpI);
+        assert!(!cpu.flags.carry);
+        assert!(!cpu.flags.zero);
+        assert!(cpu.flags.negative);
+    }
+
+    #[test]
+    fn test_cmp_eq() {
+        let mut cpu = Cpu::new();
+        cpu.rega = 10;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::CmpI);
+        assert!(cpu.flags.carry);
+        assert!(cpu.flags.zero);
+        assert!(!cpu.flags.negative);
+    }
+
+    #[test]
+    fn test_clear_overflow() {
+        let mut cpu = Cpu::new();
+        cpu.flags.overflow = true;
+        cpu.exec_instruction(Ops::Clv);
+        assert!(!cpu.flags.overflow);
+    }
+
+    #[test]
+    fn test_clear_interrupt() {
+        let mut cpu = Cpu::new();
+        cpu.flags.inter_disable = true;
+        cpu.exec_instruction(Ops::Cli);
+        assert!(!cpu.flags.inter_disable);
+    }
+
+    #[test]
+    fn test_clear_decimal() {
+        let mut cpu = Cpu::new();
+        cpu.flags.decimal = true;
+        cpu.exec_instruction(Ops::Cld);
+        assert!(!cpu.flags.decimal);
+    }
+
+    #[test]
+    fn test_clear_carry() {
+        let mut cpu = Cpu::new();
+        cpu.flags.carry = true;
+        cpu.exec_instruction(Ops::Clc);
+        assert!(!cpu.flags.carry);
+    }
+
+    #[test]
+    fn test_bvs_false() {
+        let mut cpu = Cpu::new();
+        cpu.flags.overflow = false;
+        let old_pc = cpu.pc;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::Bvs);
+        assert_eq!(cpu.pc, old_pc + 1);
+    }
+
+    #[test]
+    fn test_bvs_true() {
+        let mut cpu = Cpu::new();
+        cpu.flags.overflow = true;
+        let old_pc = cpu.pc;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::Bvs);
+        assert_eq!(cpu.pc, old_pc + 11);
+    }
+
+    #[test]
+    fn test_bvc_false() {
+        let mut cpu = Cpu::new();
+        cpu.flags.overflow = true;
+        let old_pc = cpu.pc;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::Bvc);
+        assert_eq!(cpu.pc, old_pc + 1);
+    }
+
+    #[test]
+    fn test_bvc_true() {
+        let mut cpu = Cpu::new();
+        cpu.flags.overflow = false;
+        let old_pc = cpu.pc;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::Bvc);
+        assert_eq!(cpu.pc, old_pc + 11);
+    }
+
+    #[test]
+    fn test_brk() {
+        let mut cpu = Cpu::new();
+        cpu.memory[0xFFFE] = 0x98;
+        cpu.memory[0xFFFF] = 0x45;
+        cpu.pc = 0x3456;
+        cpu.flags.carry = true;
+        cpu.exec_instruction(Ops::Brk);
+        assert_eq!(cpu.stack[0], 0x56);
+        assert_eq!(cpu.stack[1], 0x34);
+        assert_eq!(cpu.stack[2], 1);
+        assert_eq!(cpu.pc, 0x4598);
+        assert!(cpu.flags.break1 && cpu.flags.break2);
+    }
+
+    #[test]
+    fn test_bpl_false() {
+        let mut cpu = Cpu::new();
+        cpu.flags.negative = true;
+        let old_pc = cpu.pc;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::Bpl);
+        assert_eq!(cpu.pc, old_pc + 1);
+    }
+
+    #[test]
+    fn test_bpl_true() {
+        let mut cpu = Cpu::new();
+        cpu.flags.negative = false;
+        let old_pc = cpu.pc;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::Bpl);
+        assert_eq!(cpu.pc, old_pc + 11);
+    }
+
+    #[test]
+    fn test_bne_false() {
+        let mut cpu = Cpu::new();
+        cpu.flags.zero = true;
+        let old_pc = cpu.pc;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::Bne);
+        assert_eq!(cpu.pc, old_pc + 1);
+    }
+
+    #[test]
+    fn test_bne_true() {
+        let mut cpu = Cpu::new();
+        cpu.flags.zero = false;
+        let old_pc = cpu.pc;
+        cpu.memory[1] = 10;
+        cpu.exec_instruction(Ops::Bne);
+        assert_eq!(cpu.pc, old_pc + 11);
+    }
 
     #[test]
     fn test_bmi_false() {

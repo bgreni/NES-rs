@@ -3,6 +3,10 @@ pub fn combine_bytes(upper: u16, lower: u16) -> u16 {
     return (upper << 8) | lower;
 }
 
+pub fn split_bytes(bytes: u16) -> (u8, u8) {
+    return ((bytes >> 8) as u8, (bytes & 0xFF) as u8);
+}
+
 pub fn get_top_bit(val: u8) -> bool {
     return (val >> 7) == 1;
 }
@@ -19,6 +23,11 @@ pub fn is_overflow(res: u8, m: u8, n: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_split_bytes() {
+        assert_eq!(split_bytes(0x8734), (0x87, 0x34));
+    }
 
     #[test]
     fn test_check_bit_false() {

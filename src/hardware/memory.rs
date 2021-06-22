@@ -1,5 +1,5 @@
 use crate::hardware::cpu::Cpu;
-use crate::utils::combine_bytes;
+use crate::utils::{combine_bytes, split_bytes};
 
 pub const MEM_SIZE: usize = 0xFFFF + 1;
 // pub const ZERO_PAGE_BOUND: usize = 0xFF;
@@ -15,6 +15,8 @@ pub trait MemoryOps {
     fn fetch_absy(&mut self) -> usize;
     fn fetch_indirectx(&mut self) -> usize;
     fn fetch_indirecty(&mut self) -> usize;
+    fn save_pc(&mut self);
+    fn save_status(&mut self);
 }
 
 impl MemoryOps for Cpu {
@@ -67,12 +69,32 @@ impl MemoryOps for Cpu {
         let (upper, lower) = (self.memory[base+1], self.memory[base]);
         return combine_bytes(upper.into(), lower.into()).into();
     }
+
+    fn save_pc(&mut self) {
+        let (upper, lower) = split_bytes(self.pc);
+        self.stack.push(lower);
+        self.stack.push(upper);
+    }
+
+    fn save_status(&mut self) {
+        self.stack.push(self.flags.to_u8());
+    }
+
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_save_pc() {
+        let mut cpu = Cpu::new();
+        cpu.pc = 0x3456;
+        cpu.save_pc();
+        assert_eq!(cpu.stack[0], 0x56);
+        assert_eq!(cpu.stack[1], 0x34);
+    }
 
     #[test]
     fn test_fetch_indirecty() {
