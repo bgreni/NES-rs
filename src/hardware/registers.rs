@@ -1,5 +1,10 @@
+use crate::utils::check_bit;
 
+pub enum Registers {
+    A, X, Y
+}
 
+#[derive(Copy, Clone, Debug)]
 pub struct Flags {
     pub carry: bool,
     pub zero: bool,
@@ -57,12 +62,42 @@ impl Flags {
         self.break1 = false;
         self.break2 = false;
     }
+
+    pub fn set_for_cmp(&mut self, reg: u8, val: u8) {
+        self.carry = reg >= val;
+        self.zero = reg == val;
+        self.negative = reg < val;
+    }
+}
+
+impl From<u8> for Flags {
+    fn from(val: u8) -> Self {
+
+        return Flags {
+            carry: check_bit(val, 1),
+            zero: check_bit(val, 2),
+            inter_disable: check_bit(val, 3),
+            decimal: check_bit(val, 4),
+            break2: check_bit(val, 5),
+            break1: check_bit(val, 6),
+            overflow: check_bit(val, 7),
+            negative: check_bit(val, 8),
+        }
+    }
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_from_u8() {
+        let flags: Flags = Flags::from(0x81);
+        println!("{:?}", flags);
+        assert!(flags.negative);
+        assert!(flags.carry);
+    }
 
     #[test]
     fn test_to_u81() {
